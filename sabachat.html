@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>Chat Room</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- PeerJS -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<style>
+body { font-family: Tahoma, sans-serif; background: #ECE5DD; margin:0; display:flex; flex-direction:column; height:100vh;}
+/* Header سبز بالا با flex */
+header { 
+  background:#128C7E; 
+  color:#fff; 
+  padding:10px 20px; 
+  display:flex; 
+  justify-content: space-between; 
+  align-items:center; 
+  border-bottom-left-radius:20px; 
+  border-bottom-right-radius:20px;
+}
+#friendKey{padding:8px 12px; border-radius:20px; border:none; font-size:14px; width:200px;}
+#startBtn{padding:8px 20px; border-radius:20px; border:none; background:#075E54; color:#fff; font-weight:bold; cursor:pointer;}
+.chat-wrapper{flex:1; display:flex; flex-direction:column; padding:10px; overflow-y:auto; gap:5px; scroll-behavior:smooth;}
+.msg{padding:10px 15px; max-width:70%; word-wrap:break-word; position:relative; border-radius:20px; box-shadow:0 2px 5px rgba(0,0,0,0.2); transition: all 0.2s ease;}
+.msg .time{font-size:10px;color:#555;margin-top:5px;text-align:right;}
+.msg .status{font-size:12px;color:#888;margin-left:5px;}
+.left{background:#D2B48C; color:#000; align-self:flex-start; border-radius:20px;}
+.right{background:#fff; color:#000; align-self:flex-end; text-align:right; border-radius:20px;}
+.date-divider{text-align:center; font-size:12px; color:#555; margin:10px 0;}
+.typing-status{font-size:12px;color:#555;margin-left:10px;}
+footer{display:flex; padding:10px; background:#f0f0f0; gap:10px; align-items:center;}
+footer input{flex:1; padding:12px; border-radius:25px; border:1px solid #ccc; font-size:16px;}
+footer button{padding:12px 20px; border-radius:25px; border:none; background:#128C7E; color:#fff; font-weight:bold; cursor:pointer;}
+/* Footer: دکمه send سمت چپ، تکست باکس سمت راست */
+footer { flex-direction: row-reverse; }
+</style>
+</head>
+
+<body>
+<header>
+  <button id="startBtn" onclick="startChat()">Chat</button>
+  <input type="text" id="friendKey" placeholder="Enter friend key/ID">
+</header>
+
+<div class="chat-wrapper" id="chat"></div>
+<div id="typingStatus" class="typing-status"></div>
+
+<footer>
+  <input type="text" id="messageInput" placeholder="Type your message" oninput="sendTypingStatus()">
+  <button onclick="sendMessage()">Send</button>
+</footer>
+
+<script>
+let peer, conn, lastDate="", pendingMessages=[];
+
+function formatDate(date){ return date.getFullYear()+"/"+(date.getMonth()+1)+"/"+date.getDate(); }
+
+function startChat(){
+  const friendKey=document.getElementById('friendKey').value.trim();
+  if(!friendKey){alert("Please enter friend key");return;}
+  peer=new Peer({
+    host:'0.peerjs.com', port:443, path:'/', secure:true,
+    config:{iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:"turn:global.relay.metered.ca:80",username:"openai-peer",credential:"peer12345"}]}
+  });
+  peer.on('open', id=>{
+    addMessage("System","Your ID: "+id,"left");
+    connectFriend(friendKey);
+  });
+  peer.on('connection', incoming=>{
+    conn=incoming;
+    conn.on('data', handleIncomingData);
+    conn.on('open', ()=>{addMessage("System","Friend connected!","left"); flushPendingMessages();});
+  });
+}
+
+function connectFriend(friendKey){
+  conn=peer.connect(friendKey);
+  conn.on('open', ()=>{addMessage("System","Connected!","left"); flushPendingMessages();});
+  conn.on('data', handleIncomingData);
+}
+
+function handleIncomingData(data){
+  if(data.type==="msg"){ addMessage("Friend",data.text,"left"); conn.send({type:"read",id:data.id});}
+  else if(data.type==="typing") showTypingStatus(data.status);
+  else if(data.type==="read") markMessageRead(data.id);
+}
+
+function sendMessage(){
+  const msg=document.getElementById('messageInput').value.trim();
+  if(!msg) return;
+  const msgId=Date.now()+"-"+Math.floor(Math.random()*1000);
+  const messageData={type:"msg",text:msg,id:msgId};
+  addMessage("Me",msg,"right","pending",msgId);
+  if(conn && conn.open){ conn.send(messageData); markMessageSent(msgId); } else { pendingMessages.push(messageData); }
+  document.getElementById('messageInput').value='';
+  sendTypingStatus(false);
+}
+
+function flushPendingMessages(){ pendingMessages.forEach(msg=>{conn.send(msg); markMessageSent(msg.id);}); pendingMessages=[]; }
+
+function addMessage(sender,text,side,status="",id=""){
+  const chat=document.getElementById('chat');
+  const now=new Date(); const today=formatDate(now);
+  if(today!==lastDate){ const divDate=document.createElement('div'); divDate.className='date-divider'; divDate.innerText=today; chat.appendChild(divDate); lastDate=today;}
+  const div=document.createElement('div'); div.className="msg "+side; div.dataset.id=id; div.innerHTML=text.replace(/\n/g,"<br>");
+  const timeSpan=document.createElement('div'); timeSpan.className="time"; timeSpan.innerText=now.getHours().toString().padStart(2,'0')+":"+now.getMinutes().toString().padStart(2,'0'); div.appendChild(timeSpan);
+  if(status){ const statusSpan=document.createElement('span'); statusSpan.className="status"; statusSpan.innerText=status==="pending"?"⌛":"✓"; div.appendChild(statusSpan);}
+  chat.appendChild(div); chat.scrollTop=chat.scrollHeight;
+}
+
+function markMessageSent(id){ const div=document.querySelector(`.msg[data-id='${id}'] .status`); if(div) div.innerText="✓"; }
+function markMessageRead(id){ const div=document.querySelector(`.msg[data-id='${id}'] .status`); if(div) div.innerText="✓✓"; }
+function sendTypingStatus(status=true){ if(conn && conn.open) conn.send({type:"typing",status:status}); }
+function showTypingStatus(status){ document.getElementById('typingStatus').innerText=status?"Friend is typing...":"";}
+</script>
+</body>
+</html>
